@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 import { sep, join } from 'path';
 import { readFileSync, unlinkSync, rmdirSync, mkdirSync, existsSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import { UnsupportedOptionCombinationError } from '../../src/lib/errors/unsupported-option-combination-error';
 
 const osName = require('os-name');
 
@@ -447,3 +448,43 @@ test(
     );
   },
 );
+
+test('flags not allowed with --sarif', (t) => {
+  t.plan(1);
+  exec(`node ${main} test --sarif --json`, (err, stdout) => {
+    if (err) {
+      throw err;
+    }
+    t.match(
+      stdout.trim(),
+      new UnsupportedOptionCombinationError(['test', 'sarif', 'json'])
+        .userMessage,
+    );
+  });
+});
+
+test('test --sarif-file-output no value produces error message', (t) => {
+  const optionsToTest = [
+    '--sarif-file-output',
+    '--sarif-file-output=',
+    '--sarif-file-output=""',
+    "--sarif-file-output=''",
+  ];
+
+  t.plan(optionsToTest.length);
+
+  const validate = (sarifFileOutputOption: string) => {
+    const fullCommand = `node ${main} test ${sarifFileOutputOption}`;
+    exec(fullCommand, (err, stdout) => {
+      if (err) {
+        throw err;
+      }
+      t.equals(
+        stdout.trim(),
+        'Empty --sarif-file-output argument. Did you mean --file=path/to/output-file.json ?',
+      );
+    });
+  };
+
+  optionsToTest.forEach(validate);
+});

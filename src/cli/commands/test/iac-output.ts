@@ -7,6 +7,8 @@ import {
 import { getSeverityValue } from './formatters';
 import { printPath } from './formatters/remediation-based-format-issues';
 import { titleCaseText } from './formatters/legacy-format-issue';
+import * as Sarif from 'sarif';
+import { SEVERITY } from '../../../lib/snyk-test/legacy';
 const debug = Debug('iac-output');
 
 function formatIacIssue(
@@ -121,4 +123,107 @@ export function capitalizePackageManager(type) {
       return 'Infrastracture as Code';
     }
   }
+}
+
+export function createSarifOutputForIac(
+  iacTestResponses: IacTestResponse[],
+): Sarif.Log {
+  const sarifRes: Sarif.Log = {
+    version: '2.1.0',
+    runs: [],
+  };
+
+  iacTestResponses.forEach((iacTestResponse) => {
+    if (!iacTestResponse.result || !iacTestResponse.result.cloudConfigResults) {
+      return;
+    }
+
+    sarifRes.runs.push({
+      tool: getTool(iacTestResponse),
+      results: getResults(iacTestResponse),
+    });
+  });
+
+  return sarifRes;
+}
+
+function uppercaseFirstLatter(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function getIssueLevel(severity: SEVERITY): Sarif.ReportingConfiguration.level {
+  if (severity === SEVERITY.HIGH) {
+    return 'error';
+  }
+
+  return 'warning';
+}
+
+export function getTool(iacTestResponse: IacTestResponse): Sarif.Tool {
+  const tool: Sarif.Tool = {
+    driver: {
+      name: 'Snyk Infrastructure as Code',
+      rules: [],
+    },
+  };
+
+  const pushedIds: string[] = [];
+  iacTestResponse.result.cloudConfigResults.forEach(
+    (iacIssue: AnnotatedIacIssue) => {
+      if (pushedIds.includes(iacIssue.id)) {
+        return;
+      }
+      tool.driver.rules?.push({
+        id: iacIssue.id,
+        shortDescription: {
+          text: `${uppercaseFirstLatter(iacIssue.severity)} - ${
+            iacIssue.title
+          }`,
+        },
+        fullDescription: {
+          text: `Kubernetes ${iacIssue.subType}`,
+        },
+        help: {
+          text: '',
+          markdown: iacIssue.description,
+        },
+        defaultConfiguration: {
+          level: getIssueLevel(iacIssue.severity),
+        },
+        properties: {
+          tags: ['security', `kubernetes/${iacIssue.subType}`],
+        },
+      });
+      pushedIds.push(iacIssue.id);
+    },
+  );
+  return tool;
+}
+
+export function getResults(iacTestResponse: IacTestResponse): Sarif.Result[] {
+  const results: Sarif.Result[] = [];
+
+  iacTestResponse.result.cloudConfigResults.forEach(
+    (iacIssue: AnnotatedIacIssue) => {
+      results.push({
+        ruleId: iacIssue.id,
+        message: {
+          text: `This line contains a potential ${iacIssue.severity} severity misconfiguration affacting the Kubernetes ${iacIssue.subType}`,
+        },
+        locations: [
+          {
+            physicalLocation: {
+              artifactLocation: {
+                uri: iacTestResponse.targetFile,
+              },
+              region: {
+                startLine: iacIssue.lineNumber,
+              },
+            },
+          },
+        ],
+      });
+    },
+  );
+  return results;
 }

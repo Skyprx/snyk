@@ -47,10 +47,11 @@ import {
   summariseVulnerableResults,
 } from './formatters';
 import * as utils from './utils';
-import { getIacDisplayedOutput } from './iac-output';
+import { getIacDisplayedOutput, createSarifOutputForIac } from './iac-output';
 import { getEcosystem, testEcosystem } from '../../../lib/ecosystems';
 import { TestLimitReachedError } from '../../../lib/errors';
 import { isMultiProjectScan } from '../../../lib/is-multi-project-scan';
+import { createSarifOutputForContainers } from './sarif-output';
 
 const debug = Debug('snyk-test');
 const SEPARATOR = '\n-------------------------------------------------------\n';
@@ -206,13 +207,27 @@ async function test(...args: MethodArgs): Promise<TestCommandResult> {
     : results.map(mapIacTestResult);
 
   // backwards compat - strip array IFF only one result
-  const dataToSend =
+  const jsonData =
     errorMappedResults.length === 1
       ? errorMappedResults[0]
       : errorMappedResults;
-  const stringifiedData = JSON.stringify(dataToSend, null, 2);
 
-  if (options.json) {
+  let sarifData = {};
+  if (options.sarif || options['sarif-file-output']) {
+    sarifData = !options.iac
+      ? createSarifOutputForContainers(results)
+      : createSarifOutputForIac(results);
+  }
+
+  const stringifiedJsonData = JSON.stringify(jsonData, null, 2);
+  const stringifiedSarifData = JSON.stringify(sarifData, null, 2);
+
+  const dataToSend = options.sarif ? sarifData : jsonData;
+  const stringifiedData = options.sarif
+    ? stringifiedSarifData
+    : stringifiedJsonData;
+
+  if (options.json || options.sarif) {
     // if all results are ok (.ok == true) then return the json
     if (errorMappedResults.every((res) => res.ok)) {
       return TestCommandResult.createJsonTestCommandResult(stringifiedData);
@@ -235,7 +250,8 @@ async function test(...args: MethodArgs): Promise<TestCommandResult> {
     }
 
     err.json = stringifiedData;
-    err.jsonStringifiedResults = stringifiedData;
+    err.jsonStringifiedResults = stringifiedJsonData;
+    err.sarifStringifiedResults = stringifiedSarifData;
     throw err;
   }
 
@@ -300,7 +316,8 @@ async function test(...args: MethodArgs): Promise<TestCommandResult> {
         response += chalk.bold.green(summaryMessage);
         return TestCommandResult.createHumanReadableTestCommandResult(
           response,
-          stringifiedData,
+          stringifiedJsonData,
+          stringifiedSarifData,
         );
       }
     }
@@ -313,14 +330,16 @@ async function test(...args: MethodArgs): Promise<TestCommandResult> {
     // first one
     error.code = vulnerableResults[0].code || 'VULNS';
     error.userMessage = vulnerableResults[0].userMessage;
-    error.jsonStringifiedResults = stringifiedData;
+    error.jsonStringifiedResults = JSON.stringify(jsonData, null, 2);
+    error.sarifStringifiedResults = JSON.stringify(sarifData, null, 2);
     throw error;
   }
 
   response += chalk.bold.green(summaryMessage);
   return TestCommandResult.createHumanReadableTestCommandResult(
     response,
-    stringifiedData,
+    stringifiedJsonData,
+    stringifiedSarifData,
   );
 }
 
